@@ -10,6 +10,7 @@
 //! might not be what you expect.
 
 mod context;
+mod info;
 mod switch;
 #[allow(clippy::module_inception)]
 mod task;
@@ -17,6 +18,7 @@ mod task;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+pub use info::*;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -49,7 +51,7 @@ pub struct TaskManagerInner {
 
 lazy_static! {
     /// Global variable: TASK_MANAGER
-    pub static ref TASK_MANAGER: TaskManager = {
+    static ref TASK_MANAGER: TaskManager = {
         let num_app = get_num_app();
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
@@ -82,6 +84,7 @@ impl TaskManager {
         task0.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &task0.task_cx as *const TaskContext;
         drop(inner);
+        set_first_schedule_time();
         let mut _unused = TaskContext::zero_init();
         // before this, we should drop local variables that must be dropped manually
         unsafe {
@@ -126,6 +129,7 @@ impl TaskManager {
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
             drop(inner);
+            set_first_schedule_time();
             // before this, we should drop local variables that must be dropped manually
             unsafe {
                 __switch(current_task_cx_ptr, next_task_cx_ptr);
@@ -134,6 +138,10 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    fn current_task_id(&self) -> usize {
+        self.inner.exclusive_access().current_task
     }
 }
 
@@ -168,4 +176,9 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Get current task id
+pub(super) fn current_task_id() -> usize {
+    TASK_MANAGER.current_task_id()
 }
