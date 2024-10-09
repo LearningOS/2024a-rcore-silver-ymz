@@ -5,9 +5,11 @@ use crate::config::TRAP_CONTEXT_BASE;
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
+use alloc::collections::btree_map::BTreeMap;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
+use core::num::NonZeroUsize;
 
 /// Task control block structure
 ///
@@ -68,6 +70,9 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Task information
+    pub task_info: TaskInfo,
 }
 
 impl TaskControlBlockInner {
@@ -85,6 +90,22 @@ impl TaskControlBlockInner {
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
     }
+
+    /// set the first schedule time, used for `sys_task_info`
+    pub fn set_first_schedule_time(&mut self, time: usize) {
+        if self.task_info.first_schedule_time.is_none() {
+            self.task_info.first_schedule_time = Some(NonZeroUsize::new(time).unwrap());
+        }
+    }
+}
+
+/// Task information, used for `sys_task_info`
+#[derive(Clone, Default)]
+pub struct TaskInfo {
+    /// The first time the task is scheduled
+    pub first_schedule_time: Option<NonZeroUsize>,
+    /// The number of times each syscall is called
+    pub syscall_times: BTreeMap<u32, u32>,
 }
 
 impl TaskControlBlock {
@@ -118,6 +139,7 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    task_info: TaskInfo::default(),
                 })
             },
         };
@@ -191,6 +213,7 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    task_info: TaskInfo::default(),
                 })
             },
         });
@@ -235,6 +258,22 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    /// increase the number of syscalls, used for `sys_task_info`
+    pub fn inc_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner_exclusive_access();
+        inner
+            .task_info
+            .syscall_times
+            .entry(syscall_id as u32)
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
+    }
+
+    /// get task statistics info, used for `sys_task_info`
+    pub fn get_task_info(&self) -> TaskInfo {
+        self.inner_exclusive_access().task_info.clone()
     }
 }
 
