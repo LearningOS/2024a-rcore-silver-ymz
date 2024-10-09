@@ -11,6 +11,8 @@ use alloc::vec::Vec;
 use core::cell::RefMut;
 use core::num::NonZeroUsize;
 
+const BIG_STRIDE: usize = 10000;
+
 /// Task control block structure
 ///
 /// Directly save the contents that will not change during running
@@ -73,6 +75,10 @@ pub struct TaskControlBlockInner {
 
     /// Task information
     pub task_info: TaskInfo,
+
+    /// Stride scheduling
+    pub stride: usize,
+    pub pass: usize,
 }
 
 impl TaskControlBlockInner {
@@ -140,6 +146,8 @@ impl TaskControlBlock {
                     heap_bottom: user_sp,
                     program_brk: user_sp,
                     task_info: TaskInfo::default(),
+                    stride: 0,
+                    pass: BIG_STRIDE / 16,
                 })
             },
         };
@@ -214,6 +222,8 @@ impl TaskControlBlock {
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
                     task_info: TaskInfo::default(),
+                    stride: 0,
+                    pass: BIG_STRIDE / 16,
                 })
             },
         });
@@ -227,6 +237,13 @@ impl TaskControlBlock {
         task_control_block
         // **** release child PCB
         // ---- release parent PCB
+    }
+
+    /// parent process spawn the child process
+    pub fn spawn(self: Arc<Self>, task: Arc<Self>) {
+        let mut inner = self.inner_exclusive_access();
+        inner.children.push(task.clone());
+        task.inner_exclusive_access().parent = Some(Arc::downgrade(&self));
     }
 
     /// get pid of process
@@ -274,6 +291,13 @@ impl TaskControlBlock {
     /// get task statistics info, used for `sys_task_info`
     pub fn get_task_info(&self) -> TaskInfo {
         self.inner_exclusive_access().task_info.clone()
+    }
+
+    /// set priority, used for `sys_set_priority`
+    pub fn set_priority(&self, prio: usize) {
+        let mut inner = self.inner_exclusive_access();
+        inner.stride = prio;
+        inner.pass = BIG_STRIDE / prio;
     }
 }
 
