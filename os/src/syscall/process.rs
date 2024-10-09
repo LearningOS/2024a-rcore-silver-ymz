@@ -8,7 +8,7 @@ use crate::{
     mm::{translated_byte_buffer, translated_refmut, translated_str},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next, mmap_page,
-        munmap_page, suspend_current_and_run_next, TaskStatus,
+        munmap_page, suspend_current_and_run_next, TaskControlBlock, TaskStatus,
     },
     timer::{get_time_ms, get_time_us},
 };
@@ -123,7 +123,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!("kernel: sys_get_time");
+    trace!("kernel:pid[{}] sys_get_time", current_task().unwrap().pid.0);
     let time = get_time_us();
     let results = TimeVal {
         sec: time / 1_000_000,
@@ -137,7 +137,10 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
-    trace!("kernel: sys_task_info");
+    trace!(
+        "kernel:pid[{}] sys_task_info",
+        current_task().unwrap().pid.0
+    );
     let task_info = current_task().unwrap().get_task_info();
     let current_time = get_time_ms();
     let time = current_time - task_info.first_schedule_time.unwrap().get();
@@ -158,7 +161,7 @@ pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
 
 // YOUR JOB: Implement mmap.
 pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
-    trace!("kernel: sys_mmap");
+    trace!("kernel:pid[{}] sys_mmap", current_task().unwrap().pid.0);
     if start % PAGE_SIZE != 0 {
         log::info!("sys_mmap: start not page aligned");
         return -1;
@@ -180,7 +183,7 @@ pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
 
 // YOUR JOB: Implement munmap.
 pub fn sys_munmap(start: usize, len: usize) -> isize {
-    trace!("kernel: sys_munmap");
+    trace!("kernel:pid[{}] sys_munmap", current_task().unwrap().pid.0);
     if start % PAGE_SIZE != 0 {
         log::info!("sys_munmap: start not page aligned");
         return -1;
@@ -205,21 +208,31 @@ pub fn sys_sbrk(size: i32) -> isize {
 
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_spawn(path: *const u8) -> isize {
+    trace!("kernel:pid[{}] sys_spawn", current_task().unwrap().pid.0);
+    let token = current_user_token();
+    let path = translated_str(token, path);
+    let Some(data) = get_app_data_by_name(path.as_str()) else {
+        return -1;
+    };
+    let task = Arc::new(TaskControlBlock::new(data));
+    let pid = task.pid.0.try_into().unwrap();
+    current_task().unwrap().spawn(task.clone());
+    add_task(task);
+    pid
 }
 
 // YOUR JOB: Set task priority.
-pub fn sys_set_priority(_prio: isize) -> isize {
+pub fn sys_set_priority(prio: isize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_set_priority",
         current_task().unwrap().pid.0
     );
-    -1
+    if prio < 2 {
+        return -1;
+    }
+    current_task().unwrap().set_priority(prio as usize);
+    prio
 }
 
 fn bytes_of<T>(value: &T) -> &[u8] {
