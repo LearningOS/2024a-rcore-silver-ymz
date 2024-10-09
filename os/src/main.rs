@@ -21,6 +21,7 @@
 #![no_main]
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
+#![feature(btree_extract_if)]
 
 #[macro_use]
 extern crate bitflags;

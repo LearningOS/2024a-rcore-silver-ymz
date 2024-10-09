@@ -10,14 +10,18 @@
 //! might not be what you expect.
 
 mod context;
+mod info;
 mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::PAGE_SIZE;
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
+pub use info::*;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -81,6 +85,7 @@ impl TaskManager {
         next_task.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
+        set_first_schedule_time();
         let mut _unused = TaskContext::zero_init();
         // before this, we should drop local variables that must be dropped manually
         unsafe {
@@ -144,6 +149,7 @@ impl TaskManager {
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
             drop(inner);
+            set_first_schedule_time();
             // before this, we should drop local variables that must be dropped manually
             unsafe {
                 __switch(current_task_cx_ptr, next_task_cx_ptr);
@@ -152,6 +158,55 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    fn current_task_id(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        inner.current_task
+    }
+
+    fn mmap_page(&self, start: usize, len: usize, port: usize) -> bool {
+        let mut flags = unsafe { MapPermission::from_bits_unchecked((port as u8) << 1) };
+        flags.set(MapPermission::U, true);
+
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+
+        for i in 0..((len + PAGE_SIZE - 1) / PAGE_SIZE) {
+            let vpn = VirtAddr::from(start + i * PAGE_SIZE).into();
+            if let Some(pte) = inner.tasks[cur].memory_set.translate(vpn) {
+                if pte.is_valid() {
+                    log::info!("mmap_page: area {:?} already mapped", vpn);
+                    return false;
+                }
+            }
+        }
+
+        inner.tasks[cur]
+            .memory_set
+            .insert_framed_area(start.into(), (start + len).into(), flags);
+        true
+    }
+
+    fn munmap_page(&self, start: usize, len: usize) -> bool {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+
+        for i in 0..(len / PAGE_SIZE) {
+            let vpn = VirtAddr::from(start + i * PAGE_SIZE).into();
+            if let Some(pte) = inner.tasks[cur].memory_set.translate(vpn) {
+                if pte.is_valid() {
+                    continue;
+                }
+            }
+            log::info!("munmap_page: area {:?} not mapped", vpn);
+            return false;
+        }
+
+        inner.tasks[cur]
+            .memory_set
+            .remove(VirtAddr::from(start), VirtAddr::from(start + len));
+        true
     }
 }
 
@@ -201,4 +256,18 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+pub(super) fn current_task_id() -> usize {
+    TASK_MANAGER.current_task_id()
+}
+
+/// mmap a virtual page to a physical page, used for `sys_mmap`
+pub fn mmap_page(start: usize, len: usize, port: usize) -> bool {
+    TASK_MANAGER.mmap_page(start, len, port)
+}
+
+/// munmap a virtual page, used for `sys_munmap`
+pub fn munmap_page(start: usize, len: usize) -> bool {
+    TASK_MANAGER.munmap_page(start, len)
 }
