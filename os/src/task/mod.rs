@@ -11,8 +11,9 @@
 
 mod action;
 mod context;
-mod manager;
 mod id;
+mod manager;
+mod mmap;
 mod processor;
 mod signal;
 mod switch;
@@ -29,14 +30,15 @@ use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use action::{SignalAction, SignalActions};
-pub use manager::{add_task, pid2task};
 pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
+pub use manager::{add_task, pid2task};
+pub use mmap::{mmap_page, munmap_page};
 pub use processor::{
     current_task, current_trap_cx, current_user_token, run_tasks, schedule, take_current_task,
 };
 pub use signal::{SignalFlags, MAX_SIG};
 
-/// Make current task suspended and switch to the next task
+/// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     // There must be an application running.
     let task = take_current_task().unwrap();

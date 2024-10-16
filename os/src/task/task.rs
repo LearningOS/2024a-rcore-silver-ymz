@@ -1,20 +1,21 @@
 //! Types related to task management & Functions for completely changing TCB
-
-use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle, SignalActions, SignalFlags, TaskContext};
-use crate::{
-    config::TRAP_CONTEXT_BASE,
-    fs::{File, Stdin, Stdout},
-    mm::{translated_refmut, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE},
-    sync::UPSafeCell,
-    trap::{trap_handler, TrapContext},
+use super::{
+    kstack_alloc, pid_alloc, KernelStack, PidHandle, SignalActions, SignalFlags, TaskContext,
 };
-use alloc::{
-    string::String,
-    sync::{Arc, Weak},
-    vec,
-    vec::Vec,
-};
+use crate::config::TRAP_CONTEXT_BASE;
+use crate::fs::{File, Stdin, Stdout};
+use crate::mm::{translated_refmut, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::sync::UPSafeCell;
+use crate::trap::{trap_handler, TrapContext};
+use alloc::collections::btree_map::BTreeMap;
+use alloc::string::String;
+use alloc::sync::{Arc, Weak};
+use alloc::vec;
+use alloc::vec::Vec;
 use core::cell::RefMut;
+use core::num::NonZeroUsize;
+
+const BIG_STRIDE: usize = 10000;
 
 /// Task control block structure
 ///
@@ -87,6 +88,13 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Task information
+    pub task_info: TaskInfo,
+
+    /// Stride scheduling
+    pub stride: usize,
+    pub pass: usize,
 }
 
 impl TaskControlBlockInner {
@@ -102,6 +110,7 @@ impl TaskControlBlockInner {
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
     }
+
     pub fn alloc_fd(&mut self) -> usize {
         if let Some(fd) = (0..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
             fd
@@ -110,6 +119,22 @@ impl TaskControlBlockInner {
             self.fd_table.len() - 1
         }
     }
+
+    /// set the first schedule time, used for `sys_task_info`
+    pub fn set_first_schedule_time(&mut self, time: usize) {
+        if self.task_info.first_schedule_time.is_none() {
+            self.task_info.first_schedule_time = Some(NonZeroUsize::new(time).unwrap());
+        }
+    }
+}
+
+/// Task information, used for `sys_task_info`
+#[derive(Clone, Default)]
+pub struct TaskInfo {
+    /// The first time the task is scheduled
+    pub first_schedule_time: Option<NonZeroUsize>,
+    /// The number of times each syscall is called
+    pub syscall_times: BTreeMap<u32, u32>,
 }
 
 impl TaskControlBlock {
@@ -158,6 +183,9 @@ impl TaskControlBlock {
                     trap_ctx_backup: None,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    task_info: TaskInfo::default(),
+                    stride: 0,
+                    pass: BIG_STRIDE / 16,
                 })
             },
         };
@@ -273,6 +301,9 @@ impl TaskControlBlock {
                     trap_ctx_backup: None,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    task_info: TaskInfo::default(),
+                    stride: 0,
+                    pass: BIG_STRIDE / 16,
                 })
             },
         });
@@ -286,6 +317,13 @@ impl TaskControlBlock {
         task_control_block
         // **** release child PCB
         // ---- release parent PCB
+    }
+
+    /// parent process spawn the child process
+    pub fn spawn(self: Arc<Self>, task: Arc<Self>) {
+        let mut inner = self.inner_exclusive_access();
+        inner.children.push(task.clone());
+        task.inner_exclusive_access().parent = Some(Arc::downgrade(&self));
     }
 
     /// get pid of process
@@ -317,6 +355,29 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    /// increase the number of syscalls, used for `sys_task_info`
+    pub fn inc_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner_exclusive_access();
+        inner
+            .task_info
+            .syscall_times
+            .entry(syscall_id as u32)
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
+    }
+
+    /// get task statistics info, used for `sys_task_info`
+    pub fn get_task_info(&self) -> TaskInfo {
+        self.inner_exclusive_access().task_info.clone()
+    }
+
+    /// set priority, used for `sys_set_priority`
+    pub fn set_priority(&self, prio: usize) {
+        let mut inner = self.inner_exclusive_access();
+        inner.stride = prio;
+        inner.pass = BIG_STRIDE / prio;
     }
 }
 
