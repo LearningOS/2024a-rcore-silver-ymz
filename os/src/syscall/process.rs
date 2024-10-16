@@ -5,7 +5,7 @@ use alloc::{sync::Arc, vec::Vec};
 use crate::{
     config::{MAX_SYSCALL_NUM, PAGE_SIZE},
     fs::{open_file, OpenFlags},
-    mm::{translated_ref, translated_refmut, translated_str},
+    mm::{translated_byte_buffer, translated_ref, translated_refmut, translated_str, UserBuffer},
     syscall::mem_out,
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next, mmap_page,
@@ -347,6 +347,42 @@ pub fn sys_sigaction(
     } else {
         -1
     }
+}
+
+pub fn sys_mail_read(buf: *mut u8, len: usize) -> isize {
+    trace!(
+        "kernel:pid[{}] sys_mail_read",
+        current_task().unwrap().pid.0
+    );
+
+    let len = len.min(256);
+    let token = current_user_token();
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    inner
+        .mailbox
+        .read(UserBuffer::new(translated_byte_buffer(token, buf, len)))
+}
+
+pub fn sys_mail_write(pid: usize, buf: *const u8, len: usize) -> isize {
+    trace!(
+        "kernel:pid[{}] sys_mail_write",
+        current_task().unwrap().pid.0
+    );
+
+    let Some(task) = pid2task(pid) else {
+        return -1;
+    };
+    let len = len.min(256);
+    let token = current_user_token();
+    let mut inner = task.inner_exclusive_access();
+    if !inner
+        .mailbox
+        .write(UserBuffer::new(translated_byte_buffer(token, buf, len)))
+    {
+        return -1;
+    }
+    0
 }
 
 fn get_app_data_by_name(name: &str) -> Option<Vec<u8>> {

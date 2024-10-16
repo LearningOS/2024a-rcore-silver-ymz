@@ -1,4 +1,5 @@
 //! Types related to task management & Functions for completely changing TCB
+use super::mail::MailBox;
 use super::{
     kstack_alloc, pid_alloc, KernelStack, PidHandle, SignalActions, SignalFlags, TaskContext,
 };
@@ -7,6 +8,7 @@ use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
+use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
@@ -95,6 +97,9 @@ pub struct TaskControlBlockInner {
     /// Stride scheduling
     pub stride: usize,
     pub pass: usize,
+
+    /// Mailbox
+    pub mailbox: Box<MailBox>,
 }
 
 impl TaskControlBlockInner {
@@ -186,6 +191,7 @@ impl TaskControlBlock {
                     task_info: TaskInfo::default(),
                     stride: 0,
                     pass: BIG_STRIDE / 16,
+                    mailbox: Box::new(MailBox::new()),
                 })
             },
         };
@@ -304,6 +310,7 @@ impl TaskControlBlock {
                     task_info: TaskInfo::default(),
                     stride: 0,
                     pass: BIG_STRIDE / 16,
+                    mailbox: Box::new(MailBox::new()),
                 })
             },
         });

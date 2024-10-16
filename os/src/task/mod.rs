@@ -12,6 +12,7 @@
 mod action;
 mod context;
 mod id;
+mod mail;
 mod manager;
 mod mmap;
 mod processor;

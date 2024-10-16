@@ -225,7 +225,7 @@ impl DiskInode {
         let mut v: Vec<u32> = Vec::new();
         let mut data_blocks = self.data_blocks() as usize;
         self.size = size;
-        let mut current_blocks = self.data_blocks() as usize + 1;
+        let mut current_blocks = self.data_blocks() as usize;
         // direct
         while current_blocks < data_blocks.min(INODE_DIRECT_COUNT) {
             v.push(self.direct[current_blocks]);
