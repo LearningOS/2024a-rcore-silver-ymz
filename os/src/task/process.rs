@@ -278,6 +278,15 @@ impl ProcessControlBlock {
         add_task(task);
         child
     }
+
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        trace!("kernel: spawn");
+        let child = Self::new(elf_data);
+        let mut parent = self.inner_exclusive_access();
+        parent.children.push(Arc::clone(&child));
+        child
+    }
+
     /// get pid
     pub fn getpid(&self) -> usize {
         self.pid.0

@@ -12,6 +12,7 @@
 mod context;
 mod id;
 mod manager;
+mod mmap;
 mod process;
 mod processor;
 mod signal;
@@ -32,6 +33,7 @@ use switch::__switch;
 pub use context::TaskContext;
 pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle, IDLE_PID};
 pub use manager::{add_task, pid2process, remove_from_pid2process, remove_task, wakeup_task};
+pub use mmap::{mmap_page, munmap_page};
 pub use processor::{
     current_kstack_top, current_process, current_task, current_trap_cx, current_trap_cx_user_va,
     current_user_token, run_tasks, schedule, take_current_task,
@@ -39,7 +41,7 @@ pub use processor::{
 pub use signal::SignalFlags;
 pub use task::{TaskControlBlock, TaskStatus};
 
-/// Make current task suspended and switch to the next task
+/// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     // There must be an application running.
     let task = take_current_task().unwrap();
