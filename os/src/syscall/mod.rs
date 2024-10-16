@@ -58,7 +58,8 @@ use fs::*;
 use process::*;
 
 use crate::fs::Stat;
-use crate::task::current_task;
+use crate::mm::translated_byte_buffer;
+use crate::task::{current_task, current_user_token};
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
@@ -85,5 +86,20 @@ pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
         SYSCALL_SPAWN => sys_spawn(args[0] as *const u8),
         SYSCALL_SET_PRIORITY => sys_set_priority(args[0] as isize),
         _ => panic!("Unsupported syscall_id: {}", syscall_id),
+    }
+}
+
+fn bytes_of<T>(value: &T) -> &[u8] {
+    unsafe {
+        core::slice::from_raw_parts((value as *const T) as *const u8, core::mem::size_of::<T>())
+    }
+}
+
+fn mem_out<T>(virtual_ptr: usize, value: T) {
+    let mut results_bytes = bytes_of(&value);
+    let bufs = translated_byte_buffer(current_user_token(), virtual_ptr as _, results_bytes.len());
+    for buf in bufs {
+        buf.copy_from_slice(&results_bytes[..buf.len()]);
+        results_bytes = &results_bytes[buf.len()..];
     }
 }

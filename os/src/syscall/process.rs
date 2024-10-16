@@ -1,11 +1,12 @@
 //! Process management syscalls
 //!
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 
 use crate::{
     config::{MAX_SYSCALL_NUM, PAGE_SIZE},
     fs::{open_file, OpenFlags},
-    mm::{translated_byte_buffer, translated_refmut, translated_str},
+    mm::{translated_refmut, translated_str},
+    syscall::mem_out,
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next, mmap_page,
         munmap_page, suspend_current_and_run_next, TaskControlBlock, TaskStatus,
@@ -215,7 +216,7 @@ pub fn sys_spawn(path: *const u8) -> isize {
     let Some(data) = get_app_data_by_name(path.as_str()) else {
         return -1;
     };
-    let task = Arc::new(TaskControlBlock::new(data));
+    let task = Arc::new(TaskControlBlock::new(&data));
     let pid = task.pid.0.try_into().unwrap();
     current_task().unwrap().spawn(task.clone());
     add_task(task);
@@ -235,17 +236,6 @@ pub fn sys_set_priority(prio: isize) -> isize {
     prio
 }
 
-fn bytes_of<T>(value: &T) -> &[u8] {
-    unsafe {
-        core::slice::from_raw_parts((value as *const T) as *const u8, core::mem::size_of::<T>())
-    }
-}
-
-fn mem_out<T>(virtual_ptr: usize, value: T) {
-    let mut results_bytes = bytes_of(&value);
-    let bufs = translated_byte_buffer(current_user_token(), virtual_ptr as _, results_bytes.len());
-    for buf in bufs {
-        buf.copy_from_slice(&results_bytes[..buf.len()]);
-        results_bytes = &results_bytes[buf.len()..];
-    }
+fn get_app_data_by_name(name: &str) -> Option<Vec<u8>> {
+    open_file(name, OpenFlags::RDONLY).map(|inode| inode.read_all())
 }

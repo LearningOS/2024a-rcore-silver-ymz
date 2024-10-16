@@ -85,6 +85,7 @@ pub struct DiskInode {
     pub direct: [u32; INODE_DIRECT_COUNT],
     pub indirect1: u32,
     pub indirect2: u32,
+    pub nlink: u32,
     type_: DiskInodeType,
 }
 
@@ -96,6 +97,7 @@ impl DiskInode {
         self.direct.iter_mut().for_each(|v| *v = 0);
         self.indirect1 = 0;
         self.indirect2 = 0;
+        self.nlink = 1;
         self.type_ = type_;
     }
     /// Whether this inode is a directory
@@ -235,13 +237,13 @@ impl DiskInode {
             });
     }
 
-    /// Clear size to zero and return blocks that should be deallocated.
-    /// We will clear the block contents to zero later.
-    pub fn clear_size(&mut self, block_device: &Arc<dyn BlockDevice>) -> Vec<u32> {
+    /// Decrease the size of current disk inode
+    /// Return blocks that should be deallocated.
+    pub fn decrease_size(&mut self, size: u32, block_device: &Arc<dyn BlockDevice>) -> Vec<u32> {
         let mut v: Vec<u32> = Vec::new();
         let mut data_blocks = self.data_blocks() as usize;
-        self.size = 0;
-        let mut current_blocks = 0usize;
+        self.size = size;
+        let mut current_blocks = self.data_blocks() as usize + 1;
         // direct
         while current_blocks < data_blocks.min(INODE_DIRECT_COUNT) {
             v.push(self.direct[current_blocks]);
@@ -307,6 +309,19 @@ impl DiskInode {
             });
         self.indirect2 = 0;
         v
+    }
+    /// Clear size to zero and return blocks that should be deallocated.
+    /// We will clear the block contents to zero later.
+    pub fn clear_size(&mut self, block_device: &Arc<dyn BlockDevice>) -> Vec<u32> {
+        self.decrease_size(0, block_device)
+    }
+    /// Unlink current disk inode. If this is the last link, return blocks that should be deallocated, otherwise return None.
+    pub fn unlink(&mut self, block_device: &Arc<dyn BlockDevice>) -> Option<Vec<u32>> {
+        self.nlink -= 1;
+        if self.nlink != 0 {
+            return None;
+        }
+        Some(self.clear_size(block_device))
     }
     /// Read data from current disk inode
     pub fn read_at(
